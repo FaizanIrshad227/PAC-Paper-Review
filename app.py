@@ -9,13 +9,16 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "pac-review-secret-2026")
+app.secret_key = "pac-review-secret-2026"
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 UPLOAD_FOLDER  = "/tmp/pac_uploads"
 REPORT_FOLDER  = "/tmp/pac_reports"
-BATCH_SIZE     = 6
+BATCH_SIZE     = 5     # pages per Claude call
 MAX_RETRIES    = 3
-MAX_FILE_SIZE  = 50 * 1024 * 1024   # 50 MB per file
+MAX_FILE_SIZE  = 50 * 1024 * 1024
+IMAGE_DPI      = 72    # lower = smaller files = faster upload to Claude
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(REPORT_FOLDER, exist_ok=True)
@@ -71,7 +74,7 @@ def pdfs_to_text(paths):
         doc.close()
     return "\n".join(out).strip()
 
-def pdfs_to_images(paths, dpi=96):
+def pdfs_to_images(paths, dpi=IMAGE_DPI):
     imgs = []
     mat  = fitz.Matrix(dpi / 72, dpi / 72)
     for path in paths:
@@ -126,8 +129,8 @@ def merge_batches(batches):
     merged["overall_feedback"] = " | ".join(f for f in feedbacks if f)
     return merged
 
-def grade_student(api_key, q_paths, s_paths, student_paths, log_fn):
-    client = anthropic.Anthropic(api_key=api_key)
+def grade_student(q_paths, s_paths, student_paths, log_fn):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     log_fn("Extracting solution text…")
     solution_text = pdfs_to_text(s_paths)[:14000]
     log_fn("Extracting mark scheme…")
@@ -258,7 +261,7 @@ def generate_report(results, student_label, exam_title, out_path):
 #  BACKGROUND JOB RUNNER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_job(job_id, api_key, q_paths, s_paths, students):
+def run_job(job_id, q_paths, s_paths, students):
     def log(msg):
         with jobs_lock:
             jobs[job_id]["log"].append(msg)
@@ -270,7 +273,7 @@ def run_job(job_id, api_key, q_paths, s_paths, students):
         for i, (name, paths) in enumerate(students, 1):
             log(f"[{i}/{len(students)}] Reviewing: {name}")
             try:
-                results  = grade_student(api_key, q_paths, s_paths, paths, log)
+                results  = grade_student(q_paths, s_paths, paths, log)
                 out_path = os.path.join(REPORT_FOLDER, f"{job_id}_{i}.pdf")
                 generate_report(results, name, exam_title, out_path)
                 reports.append((name, out_path))
@@ -321,12 +324,12 @@ def save_uploads(files, prefix, job_id):
 def index():
     return render_template("index.html")
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
 @app.route("/review", methods=["POST"])
 def review():
-    api_key = request.form.get("api_key","").strip()
-    if not api_key.startswith("sk-ant-"):
-        return jsonify({"error": "Invalid Anthropic API key (must start with sk-ant-)"}), 400
-
     job_id  = uuid.uuid4().hex
     q_paths = save_uploads(request.files.getlist("question_paper"), "q", job_id)
     s_paths = save_uploads(request.files.getlist("solution"),       "s", job_id)
@@ -356,7 +359,7 @@ def review():
         jobs[job_id] = {"status": "running", "log": [], "report_path": None}
 
     threading.Thread(target=run_job,
-                     args=(job_id, api_key, q_paths, s_paths, students),
+                     args=(job_id, q_paths, s_paths, students),
                      daemon=True).start()
 
     return jsonify({"job_id": job_id})

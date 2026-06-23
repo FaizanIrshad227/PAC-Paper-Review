@@ -45,39 +45,20 @@
     text-align:center;margin-top:12px;display:none}
   .show{display:block!important}
   .show-flex{display:flex!important}
-  .api-row{display:flex;gap:8px;align-items:center}
-  .api-row input{flex:1}
-  .tip{font-size:.75rem;color:#777;margin-top:4px}
-  a.tip-link{color:#005baa}
 </style>
 </head>
 <body>
 
 <header>
   <h1>PAC Paper Review Agent</h1>
-  <span>Powered by Claude Vision (Anthropic)</span>
+  <span>Developed by ecknteck solutions</span>
 </header>
 
 <div class="container">
 
-  <!-- API Key -->
-  <div class="card">
-    <div class="card-title">1 &nbsp; Anthropic API Key</div>
-    <div class="card-body">
-      <div class="api-row">
-        <input type="password" id="api_key" placeholder="sk-ant-api03-…">
-        <button class="btn btn-grey" onclick="toggleKey()">Show/Hide</button>
-      </div>
-      <p class="tip">Get your free key at
-        <a class="tip-link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
-        → API Keys → Create Key
-      </p>
-    </div>
-  </div>
-
   <!-- Question Paper -->
   <div class="card">
-    <div class="card-title">2 &nbsp; Question Paper &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
+    <div class="card-title">1 &nbsp; Question Paper &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
     <div class="card-body">
       <div class="file-input-row" id="q-tags"></div>
       <br>
@@ -88,7 +69,7 @@
 
   <!-- Solution -->
   <div class="card">
-    <div class="card-title">3 &nbsp; Model Solution &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
+    <div class="card-title">2 &nbsp; Model Solution &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
     <div class="card-body">
       <div class="file-input-row" id="s-tags"></div>
       <br>
@@ -99,7 +80,7 @@
 
   <!-- Students -->
   <div class="card">
-    <div class="card-title">4 &nbsp; Student Answer Sheets &nbsp;<small style="font-weight:400">(each student can have multiple PDFs)</small></div>
+    <div class="card-title">3 &nbsp; Student Answer Sheets &nbsp;<small style="font-weight:400">(each student can have multiple PDFs)</small></div>
     <div class="card-body">
       <div id="student-list"></div>
       <br>
@@ -108,6 +89,7 @@
   </div>
 
   <!-- Run -->
+  <!-- Output folder label removed — server handles output -->
   <button class="btn btn-green" id="run-btn" onclick="startReview()">▶  Review All Students</button>
 
   <!-- Progress & Log -->
@@ -125,11 +107,6 @@
 let qFiles = [], sFiles = [];
 let studentCount = 0;
 let students = {};  // index -> {name, files:[]}
-
-function toggleKey(){
-  const el = document.getElementById('api_key');
-  el.type = el.type === 'password' ? 'text' : 'password';
-}
 
 function pickFiles(inputId, tagsId, arr){
   const inp = document.getElementById(inputId);
@@ -195,6 +172,11 @@ function pickStudentFiles(idx){
   inp.click();
 }
 
+// Wake up Railway instance on page load (free tier sleeps after inactivity)
+window.addEventListener('load', () => {
+  fetch('/health').catch(()=>{});
+});
+
 function log(msg){
   const box = document.getElementById('log-box');
   box.classList.add('show');
@@ -202,16 +184,18 @@ function log(msg){
   box.scrollTop = box.scrollHeight;
 }
 
+function setProgress(pct, label){
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('run-btn').textContent = label || '⏳  Processing…';
+}
+
 async function startReview(){
-  const apiKey = document.getElementById('api_key').value.trim();
-  if(!apiKey){ alert('Please enter your Anthropic API key.'); return; }
   if(qFiles.length===0){ alert('Please add at least one Question Paper PDF.'); return; }
   if(sFiles.length===0){ alert('Please add at least one Model Solution PDF.'); return; }
   const stuEntries = Object.values(students).filter(s=>s.files.length>0);
   if(stuEntries.length===0){ alert('Please add at least one student with PDF files.'); return; }
 
   const fd = new FormData();
-  fd.append('api_key', apiKey);
   qFiles.forEach(f => fd.append('question_paper', f));
   sFiles.forEach(f => fd.append('solution', f));
   stuEntries.forEach((stu, i) => {
@@ -220,49 +204,65 @@ async function startReview(){
   });
 
   document.getElementById('run-btn').disabled = true;
-  document.getElementById('run-btn').textContent = '⏳  Processing…';
   document.getElementById('download-btn').style.display = 'none';
   document.getElementById('log-box').textContent = '';
   document.getElementById('progress-wrap').classList.add('show');
-  document.getElementById('progress-fill').style.width = '10%';
+  setProgress(5, '⏳  Uploading files…');
+  log('Uploading PDFs to server… (this may take 20–30 seconds for large files)');
 
-  log('Uploading files…');
-  const res  = await fetch('/review', {method:'POST', body:fd});
-  const data = await res.json();
-
-  if(data.error){ alert(data.error); resetBtn(); return; }
-
-  log('Files uploaded. Grading in progress…');
-  pollStatus(data.job_id, stuEntries.length);
+  try {
+    const res  = await fetch('/review', {method:'POST', body:fd});
+    const data = await res.json();
+    if(data.error){ alert(data.error); resetBtn(); return; }
+    setProgress(15, '⏳  Grading in progress…');
+    log('Upload complete. Claude is now reviewing the answer sheets…');
+    log('⏱  Each student takes 1–3 minutes depending on answer sheet size.');
+    lastLogLen = 0;
+    pollStatus(data.job_id, stuEntries.length);
+  } catch(e) {
+    log('✗ Upload failed: ' + e.message);
+    resetBtn();
+  }
 }
 
 let lastLogLen = 0;
+let pollFailures = 0;
+
 function pollStatus(jobId, total){
   fetch(`/status/${jobId}`)
     .then(r=>r.json())
     .then(data=>{
-      // Append new log lines
+      pollFailures = 0;
       const newLines = data.log.slice(lastLogLen);
       newLines.forEach(l => log(l));
       lastLogLen = data.log.length;
 
-      // Estimate progress
-      const pct = Math.min(90, 10 + (lastLogLen / (total * 8)) * 80);
-      document.getElementById('progress-fill').style.width = pct + '%';
+      const pct = Math.min(90, 15 + (lastLogLen / (total * 10)) * 75);
+      setProgress(pct, '⏳  Grading in progress…');
 
       if(data.status === 'done'){
-        document.getElementById('progress-fill').style.width = '100%';
-        log('✓ All done! Click Download below.');
+        setProgress(100, '✓  Done!');
+        log('✓ All done! Click the Download button below.');
         const dlBtn = document.getElementById('download-btn');
         dlBtn.href    = `/download/${jobId}`;
         dlBtn.download = data.report_name || 'review_report.pdf';
         dlBtn.style.display = 'block';
         resetBtn();
       } else if(data.status === 'error'){
-        log('✗ Error: ' + data.error);
+        log('✗ Error: ' + (data.error || 'Unknown error'));
         resetBtn();
       } else {
-        setTimeout(()=>pollStatus(jobId, total), 3000);
+        setTimeout(()=>pollStatus(jobId, total), 4000);
+      }
+    })
+    .catch(()=>{
+      pollFailures++;
+      log(`⚠ Connection check ${pollFailures}/5…`);
+      if(pollFailures < 5){
+        setTimeout(()=>pollStatus(jobId, total), 6000);
+      } else {
+        log('✗ Lost connection to server. Please refresh and try again.');
+        resetBtn();
       }
     });
 }
