@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "PAC Review Web App",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["app.py"],
+      "port": 5000,
+      "cwd": "C:\\Users\\Faizan\\Desktop\\PAC Paper Review Agent\\webapp"
+    }
+  ]
+}

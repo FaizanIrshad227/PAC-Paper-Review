@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PAC Paper Review Agent</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',sans-serif;background:#f4f6fa;color:#222}
+  header{background:#003087;color:#fff;padding:18px 28px;display:flex;align-items:center;justify-content:space-between}
+  header h1{font-size:1.4rem;font-weight:700}
+  header span{font-size:.8rem;color:#a0c8ff}
+  .container{max-width:860px;margin:28px auto;padding:0 16px}
+  .card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:18px;overflow:hidden}
+  .card-title{background:#003087;color:#fff;padding:10px 18px;font-size:.9rem;font-weight:600}
+  .card-body{padding:16px 18px}
+  label{font-size:.85rem;font-weight:600;display:block;margin-bottom:5px;color:#003087}
+  input[type=text],input[type=password]{width:100%;padding:8px 10px;border:1px solid #ccc;
+    border-radius:5px;font-size:.85rem}
+  .file-input-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .file-tag{background:#e8f4fd;border:1px solid #005baa;border-radius:4px;
+    padding:3px 8px;font-size:.78rem;color:#003087;display:flex;align-items:center;gap:4px}
+  .file-tag button{background:none;border:none;cursor:pointer;color:#b00000;font-size:.9rem;line-height:1}
+  .btn{padding:8px 16px;border:none;border-radius:5px;cursor:pointer;font-size:.85rem;font-weight:600}
+  .btn-blue{background:#003087;color:#fff}
+  .btn-blue:hover{background:#005baa}
+  .btn-grey{background:#888;color:#fff}
+  .btn-grey:hover{background:#666}
+  .btn-red{background:#b00000;color:#fff}
+  .btn-green{background:#1a6b1a;color:#fff;width:100%;padding:12px;font-size:1rem;margin-top:4px}
+  .btn-green:hover{background:#145214}
+  .btn-green:disabled{background:#999;cursor:not-allowed}
+  .student-row{display:flex;align-items:center;gap:8px;padding:8px 0;
+    border-bottom:1px solid #eee;flex-wrap:wrap}
+  .student-row input{flex:1;min-width:140px}
+  .student-files{display:flex;flex-wrap:wrap;gap:4px;flex:2}
+  #log-box{background:#1e1e1e;color:#d4d4d4;font-family:Consolas,monospace;
+    font-size:.78rem;padding:12px;border-radius:5px;height:200px;overflow-y:auto;
+    white-space:pre-wrap;display:none}
+  .progress-wrap{display:none;margin-top:12px}
+  .progress-bar{height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden}
+  .progress-fill{height:100%;background:#003087;width:0%;transition:width .3s}
+  .download-btn{display:none;background:#1a6b1a;color:#fff;padding:12px 24px;
+    border-radius:6px;text-decoration:none;font-weight:700;font-size:1rem;
+    text-align:center;margin-top:12px;display:none}
+  .show{display:block!important}
+  .show-flex{display:flex!important}
+  .api-row{display:flex;gap:8px;align-items:center}
+  .api-row input{flex:1}
+  .tip{font-size:.75rem;color:#777;margin-top:4px}
+  a.tip-link{color:#005baa}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PAC Paper Review Agent</h1>
+  <span>Powered by Claude Vision (Anthropic)</span>
+</header>
+
+<div class="container">
+
+  <!-- API Key -->
+  <div class="card">
+    <div class="card-title">1 &nbsp; Anthropic API Key</div>
+    <div class="card-body">
+      <div class="api-row">
+        <input type="password" id="api_key" placeholder="sk-ant-api03-…">
+        <button class="btn btn-grey" onclick="toggleKey()">Show/Hide</button>
+      </div>
+      <p class="tip">Get your free key at
+        <a class="tip-link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+        → API Keys → Create Key
+      </p>
+    </div>
+  </div>
+
+  <!-- Question Paper -->
+  <div class="card">
+    <div class="card-title">2 &nbsp; Question Paper &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
+    <div class="card-body">
+      <div class="file-input-row" id="q-tags"></div>
+      <br>
+      <button class="btn btn-blue" onclick="pickFiles('q-input','q-tags',qFiles)">+ Add PDFs</button>
+      <input type="file" id="q-input" accept=".pdf" multiple style="display:none">
+    </div>
+  </div>
+
+  <!-- Solution -->
+  <div class="card">
+    <div class="card-title">3 &nbsp; Model Solution &nbsp;<small style="font-weight:400">(one or more PDFs)</small></div>
+    <div class="card-body">
+      <div class="file-input-row" id="s-tags"></div>
+      <br>
+      <button class="btn btn-blue" onclick="pickFiles('s-input','s-tags',sFiles)">+ Add PDFs</button>
+      <input type="file" id="s-input" accept=".pdf" multiple style="display:none">
+    </div>
+  </div>
+
+  <!-- Students -->
+  <div class="card">
+    <div class="card-title">4 &nbsp; Student Answer Sheets &nbsp;<small style="font-weight:400">(each student can have multiple PDFs)</small></div>
+    <div class="card-body">
+      <div id="student-list"></div>
+      <br>
+      <button class="btn btn-blue" onclick="addStudent()">+ Add Student</button>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <button class="btn btn-green" id="run-btn" onclick="startReview()">▶  Review All Students</button>
+
+  <!-- Progress & Log -->
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+  </div>
+  <div id="log-box"></div>
+
+  <!-- Download -->
+  <a id="download-btn" class="download-btn" href="#" download>⬇  Download Report(s)</a>
+
+</div>
+
+<script>
+let qFiles = [], sFiles = [];
+let studentCount = 0;
+let students = {};  // index -> {name, files:[]}
+
+function toggleKey(){
+  const el = document.getElementById('api_key');
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+function pickFiles(inputId, tagsId, arr){
+  const inp = document.getElementById(inputId);
+  inp.onchange = () => {
+    Array.from(inp.files).forEach(f => {
+      if(!arr.find(x=>x.name===f.name)){
+        arr.push(f);
+        addTag(tagsId, f.name, ()=>{ arr.splice(arr.indexOf(f),1); });
+      }
+    });
+    inp.value='';
+  };
+  inp.click();
+}
+
+function addTag(containerId, name, removeFn){
+  const box = document.getElementById(containerId);
+  const tag = document.createElement('span');
+  tag.className = 'file-tag';
+  tag.innerHTML = `${name} <button onclick="this.parentElement.remove();(${removeFn.toString()})()">✕</button>`;
+  box.appendChild(tag);
+}
+
+function addStudent(){
+  studentCount++;
+  const idx = studentCount;
+  students[idx] = { name: `Student_${idx}`, files: [] };
+
+  const row = document.createElement('div');
+  row.className = 'student-row';
+  row.id = `stu-row-${idx}`;
+  row.innerHTML = `
+    <input type="text" value="Student_${idx}" placeholder="Student name"
+           onchange="students[${idx}].name=this.value" style="max-width:160px">
+    <div class="student-files" id="stu-tags-${idx}"></div>
+    <button class="btn btn-blue" style="white-space:nowrap"
+            onclick="pickStudentFiles(${idx})">+ Files</button>
+    <button class="btn btn-red"
+            onclick="document.getElementById('stu-row-${idx}').remove();delete students[${idx}]">✕</button>
+    <input type="file" id="stu-input-${idx}" accept=".pdf" multiple style="display:none">
+  `;
+  document.getElementById('student-list').appendChild(row);
+}
+
+function pickStudentFiles(idx){
+  const inp = document.getElementById(`stu-input-${idx}`);
+  inp.onchange = () => {
+    Array.from(inp.files).forEach(f => {
+      if(!students[idx].files.find(x=>x.name===f.name)){
+        students[idx].files.push(f);
+        const box = document.getElementById(`stu-tags-${idx}`);
+        const tag = document.createElement('span');
+        tag.className = 'file-tag';
+        tag.innerHTML = `${f.name} <button onclick="
+          this.parentElement.remove();
+          students[${idx}].files=students[${idx}].files.filter(x=>x.name!=='${f.name}')
+        ">✕</button>`;
+        box.appendChild(tag);
+      }
+    });
+    inp.value='';
+  };
+  inp.click();
+}
+
+function log(msg){
+  const box = document.getElementById('log-box');
+  box.classList.add('show');
+  box.textContent += msg + '\n';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function startReview(){
+  const apiKey = document.getElementById('api_key').value.trim();
+  if(!apiKey){ alert('Please enter your Anthropic API key.'); return; }
+  if(qFiles.length===0){ alert('Please add at least one Question Paper PDF.'); return; }
+  if(sFiles.length===0){ alert('Please add at least one Model Solution PDF.'); return; }
+  const stuEntries = Object.values(students).filter(s=>s.files.length>0);
+  if(stuEntries.length===0){ alert('Please add at least one student with PDF files.'); return; }
+
+  const fd = new FormData();
+  fd.append('api_key', apiKey);
+  qFiles.forEach(f => fd.append('question_paper', f));
+  sFiles.forEach(f => fd.append('solution', f));
+  stuEntries.forEach((stu, i) => {
+    fd.append(`student_name_${i+1}`, stu.name);
+    stu.files.forEach(f => fd.append(`student_files_${i+1}`, f));
+  });
+
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-btn').textContent = '⏳  Processing…';
+  document.getElementById('download-btn').style.display = 'none';
+  document.getElementById('log-box').textContent = '';
+  document.getElementById('progress-wrap').classList.add('show');
+  document.getElementById('progress-fill').style.width = '10%';
+
+  log('Uploading files…');
+  const res  = await fetch('/review', {method:'POST', body:fd});
+  const data = await res.json();
+
+  if(data.error){ alert(data.error); resetBtn(); return; }
+
+  log('Files uploaded. Grading in progress…');
+  pollStatus(data.job_id, stuEntries.length);
+}
+
+let lastLogLen = 0;
+function pollStatus(jobId, total){
+  fetch(`/status/${jobId}`)
+    .then(r=>r.json())
+    .then(data=>{
+      // Append new log lines
+      const newLines = data.log.slice(lastLogLen);
+      newLines.forEach(l => log(l));
+      lastLogLen = data.log.length;
+
+      // Estimate progress
+      const pct = Math.min(90, 10 + (lastLogLen / (total * 8)) * 80);
+      document.getElementById('progress-fill').style.width = pct + '%';
+
+      if(data.status === 'done'){
+        document.getElementById('progress-fill').style.width = '100%';
+        log('✓ All done! Click Download below.');
+        const dlBtn = document.getElementById('download-btn');
+        dlBtn.href    = `/download/${jobId}`;
+        dlBtn.download = data.report_name || 'review_report.pdf';
+        dlBtn.style.display = 'block';
+        resetBtn();
+      } else if(data.status === 'error'){
+        log('✗ Error: ' + data.error);
+        resetBtn();
+      } else {
+        setTimeout(()=>pollStatus(jobId, total), 3000);
+      }
+    });
+}
+
+function resetBtn(){
+  const btn = document.getElementById('run-btn');
+  btn.disabled = false;
+  btn.textContent = '▶  Review All Students';
+}
+</script>
+</body>
+</html>
