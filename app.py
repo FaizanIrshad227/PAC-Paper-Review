@@ -131,32 +131,32 @@ def merge_batches(batches):
 
 def grade_student(q_paths, s_paths, student_paths, log_fn):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    log_fn("Extracting solution text…")
+    log_fn("Agent is extracting solution text…")
     solution_text = pdfs_to_text(s_paths)[:14000]
-    log_fn("Extracting mark scheme…")
+    log_fn("Agent is extracting mark scheme…")
     mark_scheme   = extract_mark_scheme(q_paths)
     exam_title    = ", ".join(os.path.splitext(os.path.basename(p))[0] for p in q_paths)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         exam_title=exam_title, solution_text=solution_text, mark_scheme=mark_scheme)
 
-    log_fn("Converting answer sheet to images…")
+    log_fn("Agent is converting answer sheet to images…")
     all_imgs  = pdfs_to_images(student_paths)
     n_pages   = len(all_imgs)
     n_batches = (n_pages + BATCH_SIZE - 1) // BATCH_SIZE
-    log_fn(f"{n_pages} pages → {n_batches} batch(es)")
+    log_fn(f"Agent detected {n_pages} pages → {n_batches} batch(es)")
 
     results = []
     for i in range(n_batches):
         batch = all_imgs[i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
         p1, p2 = i * BATCH_SIZE + 1, i * BATCH_SIZE + len(batch)
-        log_fn(f"Sending batch {i+1}/{n_batches} (pages {p1}–{p2}) to Claude…")
+        log_fn(f"Agent is reviewing batch {i+1}/{n_batches} (pages {p1}–{p2})…")
         instr = (f"Batch {i+1}/{n_batches} (pages {p1}–{p2}). "
                  "Grade every question visible. Return ONLY the JSON response."
                  if n_batches > 1 else
                  "Grade every question. Return ONLY the JSON response.")
         raw = call_claude(client, system_prompt, batch, instr)
         results.append(parse_json(raw))
-        log_fn(f"Batch {i+1} done ✓")
+        log_fn(f"Agent completed batch {i+1} ✓")
 
     return results[0] if n_batches == 1 else merge_batches(results)
 
@@ -271,13 +271,13 @@ def run_job(job_id, q_paths, s_paths, students):
 
     try:
         for i, (name, paths) in enumerate(students, 1):
-            log(f"[{i}/{len(students)}] Reviewing: {name}")
+            log(f"[{i}/{len(students)}] Agent is reviewing: {name}")
             try:
                 results  = grade_student(q_paths, s_paths, paths, log)
                 out_path = os.path.join(REPORT_FOLDER, f"{job_id}_{i}.pdf")
                 generate_report(results, name, exam_title, out_path)
                 reports.append((name, out_path))
-                log(f"✓ Report ready for {name}")
+                log(f"✓ Agent has completed the review for {name}")
             except Exception as e:
                 log(f"✗ Error for {name}: {e}")
 
